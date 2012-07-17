@@ -94,12 +94,30 @@ static struct clock_state drv_state = { 0 };
 /* Switch to this when reprogramming PLL2 */
 static struct clkctl_acpu_speed *backup_s;
 
+//slz begin
+/*
 static struct pll pll2_tbl[] = {
-	{  42, 0, 1, 0 }, /*  806 MHz */
-	{  53, 1, 3, 0 }, /* 1024 MHz */
-	{ 125, 0, 1, 1 }, /* 1200 MHz */
-	{  73, 0, 1, 0 }, /* 1401 MHz */
+	{  42, 0, 1, 0 }, //  806 MHz
+	{  53, 1, 3, 0 }, // 1024 MHz
+	{ 125, 0, 1, 1 }, // 1200 MHz
+	{  73, 0, 1, 0 }, // 1401 MHz
 };
+*/
+
+static struct pll pll2_tbl[] = {
+    {  42, 0, 1, 0 }, /*  806400 KHz */
+    {  53, 1, 3, 0 }, /* 1024000 KHz */
+    {  58, 1, 3, 0 }, /* 1113600 KHz */
+    {  63, 1, 3, 0 }, /* 1209600 KHz */
+    {  68, 1, 3, 0 }, /* 1305600 KHz */
+    {  73, 1, 3, 0 }, /* 1401600 KHz */
+    {  78, 1, 3, 0 }, /* 1497600 KHz */
+    {  79, 1, 3, 0 }, /* 1516800 KHz */
+    {  84, 1, 3, 0 }, /* 1612800 KHz */
+    {  89, 1, 3, 0 }, /* 1708800 KHz */
+    {  94, 1, 3, 0 }, /* 1804800 KHz */
+};
+//slz end
 
 /* Use negative numbers for sources that can't be enabled/disabled */
 #define SRC_LPXO (-2)
@@ -123,11 +141,26 @@ static struct clkctl_acpu_speed acpu_freq_tbl[] = {
 	/*
 	 * AXI has MSMC1 implications. See above.
 	 */
+//slz begin
+/*
 	{ 1, 806400,  PLL_2, 3, 0, UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
 	{ 1, 1024000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[1]},
 	{ 1, 1200000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
 	{ 1, 1401600, PLL_2, 3, 0, UINT_MAX, 1275, VDD_RAW(1275), &pll2_tbl[3]},
+*/
+	{ 1,  806400, PLL_2,   3, 0,  UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
+	{ 1, 1024000, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[1]},
+	{ 1, 1113600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
+	{ 1, 1209600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[3]},
+	{ 1, 1305600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[4]},
+	{ 1, 1401600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[5]},
+	{ 1, 1497600, PLL_2,   3, 0,  UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[6]},
+	{ 1, 1516800, PLL_2,   3, 0,  UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[7]},
+	{ 1, 1612800, PLL_2,   3, 0,  UINT_MAX, 1300, VDD_RAW(1300), &pll2_tbl[8]},
+	{ 1, 1708800, PLL_2,   3, 0,  UINT_MAX, 1350, VDD_RAW(1350), &pll2_tbl[9]},
+	{ 1, 1804800, PLL_2,   3, 0,  UINT_MAX, 1400, VDD_RAW(1400), &pll2_tbl[10]},
 	{ 0 }
+//slz end
 };
 
 #define POWER_COLLAPSE_KHZ MAX_AXI_KHZ
@@ -201,6 +234,20 @@ static void acpuclk_set_src(const struct clkctl_acpu_speed *s)
 	reg_clkctl |= s->acpu_src_sel << (4 + 8 * src_sel);
 	reg_clkctl |= s->acpu_src_div << (0 + 8 * src_sel);
 	writel(reg_clkctl, SCSS_CLK_CTL_ADDR);
+
+	//slz begin
+    /* Program PLL2 L val for overclocked speeds. */
+    if(s->src == PLL_2) {
+        unsigned int pll2_l_new;
+
+        if (s->pll_rate && s->pll_rate->l)
+            pll2_l_new = s->pll_rate->l;
+        else
+            pll2_l_new = s->acpu_clk_khz / 19200;
+
+        writel(pll2_l_new, PLL2_L_VAL_ADDR);
+    }
+    //slz end
 
 	/* Toggle clock source. */
 	reg_clksel ^= 1;
@@ -481,8 +528,12 @@ void __init pll2_fixup(void)
 		if (speed->src != PLL_2)
 			backup_s = speed;
 		if (speed->pll_rate && speed->pll_rate->l == pll2_l) {
-			speed++;
-			speed->acpu_clk_khz = 0;
+            //slz begin
+			/* it seems this function ends up cutting off the higher,
+				unsupported frequencies for a phone */
+            //speed++;
+            //speed->acpu_clk_khz = 0;
+            //slz end
 			return;
 		}
 	}
