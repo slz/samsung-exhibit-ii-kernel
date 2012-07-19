@@ -651,6 +651,167 @@ static ssize_t show_scaling_setspeed(struct cpufreq_policy *policy, char *buf)
 	return policy->governor->show_setspeed(policy, buf);
 }
 
+//slz begin voltage controls
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+
+extern ssize_t acpuclk_get_vdd_levels_str(char *buf);
+static ssize_t show_UV_mV_table(struct cpufreq_policy *policy, char *buf)
+{
+	return acpuclk_get_vdd_levels_str(buf);
+}
+
+static ssize_t show_vdd_levels(struct cpufreq_policy *policy, char *buf)
+{
+	return show_UV_mV_table(policy, buf);
+}
+
+//extern unsigned int apuclk_get_max_freq();
+static ssize_t show_change_freq(struct cpufreq_policy *policy, char *buf)
+{
+	return 0;
+}
+
+extern int acpuclk_change_freq(unsigned int old_acpu_khz, unsigned int new_acpu_khz, unsigned int acpu_vdd);
+static ssize_t store_change_freq(struct cpufreq_policy *policy, char *buf, size_t count)
+{
+	int i = 0, j;
+	int pair[3] = { 0, 0, 0 };
+
+	if (count < 1)
+		return 0;
+
+	for (j = 0; i < count; i++)
+	{
+		char c = buf[i];
+		if ((c >= '0') && (c <= '9'))
+		{
+			pair[j] *= 10;
+			pair[j] += (c - '0');
+		}
+		else if ((c == ' ') || (c == '\t'))
+		{
+			if (pair[j] != 0)
+			{
+				j++;
+				if (j > 2)
+					break;
+			}
+		}
+		else
+			break;
+	}
+
+	if ((pair[0] > 0) && (pair[1] > 0) && (pair[2] > 0))
+		acpuclk_change_freq((unsigned)pair[0], (unsigned)pair[1], pair[2]);
+	else
+		return -EINVAL;
+
+	return count;
+}
+
+extern void acpuclk_set_vdd(unsigned acpu_khz, int vdd);
+static ssize_t store_vdd_levels(struct cpufreq_policy *policy, const char *buf, size_t count)
+{
+	int i = 0, j;
+	int pair[2] = { 0, 0 };
+	int sign = 0;
+
+	if (count < 1)
+		return 0;
+
+	if (buf[0] == '-')
+	{
+		sign = -1;
+		i++;
+	}
+	else if (buf[0] == '+')
+	{
+		sign = 1;
+		i++;
+	}
+
+	for (j = 0; i < count; i++)
+	{
+		char c = buf[i];
+		if ((c >= '0') && (c <= '9'))
+		{
+			pair[j] *= 10;
+			pair[j] += (c - '0');
+		}
+		else if ((c == ' ') || (c == '\t'))
+		{
+			if (pair[j] != 0)
+			{
+				j++;
+				if ((sign != 0) || (j > 1))
+					break;
+			}
+		}
+		else
+			break;
+	}
+
+	if (sign != 0)
+	{
+		if (pair[0] > 0)
+			acpuclk_set_vdd(0, sign * pair[0]);
+	}
+	else
+	{
+		if ((pair[0] > 0) && (pair[1] > 0))
+			acpuclk_set_vdd((unsigned)pair[0], pair[1]);
+		else
+			return -EINVAL;
+	}
+
+	return count;
+}
+
+/*
+static ssize_t store_UV_mV_table(struct cpufreq_policy *policy,
+					const char *buf, size_t size)
+{
+    int i = 0, j = 0, next_freq = 0;
+    unsigned long voltage;
+
+    char buffer[20];
+
+    while (1)
+	{
+	    buffer[j] = buf[i];
+
+	    i++;
+	    j++;
+
+	    if (buf[i] == ' ' || buf[i] == '\0')
+		{
+		    buffer[j] = '\0';
+
+		    if (sscanf(buffer, "%lu", &voltage) == 1)
+			{
+			    arm_voltages[next_freq] = voltage * 1000;
+
+			    next_freq++;
+			}
+
+		    if (buf[i] == '\0' || next_freq > num_freqs)
+			{
+			    break;
+			}
+
+		    j = 0;
+		}
+	}
+
+    customvoltage_updatearmvolt(arm_voltages);
+
+    return size;
+}
+*/
+#endif
+//slz end voltage controls
+
+
 /**
  * show_scaling_driver - show the current cpufreq HW/BIOS limitation
  */
@@ -680,6 +841,13 @@ cpufreq_freq_attr_rw(scaling_min_freq);
 cpufreq_freq_attr_rw(scaling_max_freq);
 cpufreq_freq_attr_rw(scaling_governor);
 cpufreq_freq_attr_rw(scaling_setspeed);
+//slz begin
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+cpufreq_freq_attr_rw(vdd_levels);
+cpufreq_freq_attr_ro(UV_mV_table);
+cpufreq_freq_attr_rw(change_freq);
+#endif
+//slz end
 
 static struct attribute *default_attrs[] = {
 	&cpuinfo_min_freq.attr,
@@ -693,6 +861,13 @@ static struct attribute *default_attrs[] = {
 	&scaling_driver.attr,
 	&scaling_available_governors.attr,
 	&scaling_setspeed.attr,
+//slz begin
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+	&vdd_levels.attr,
+	&UV_mV_table.attr,
+	&change_freq.attr,
+#endif
+//slz end
 	NULL
 };
 

@@ -192,6 +192,22 @@ int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 	return 0;
 }
 
+//slz begin
+unsigned int msm_spm_get_vdd(void)
+{
+	unsigned long flags;
+	struct msm_spm_device *dev;
+	unsigned int vlevel;
+
+	local_irq_save(flags);
+	dev = &__get_cpu_var(msm_spm_devices);
+	vlevel = dev->awake_vlevel;
+	local_irq_restore(flags);
+
+	return vlevel;
+}
+//slz end
+
 int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 {
 	unsigned long flags;

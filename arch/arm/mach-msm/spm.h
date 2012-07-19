@@ -72,6 +72,11 @@ struct msm_spm_platform_data {
 #if defined(CONFIG_ARCH_MSM7X30) || defined(CONFIG_ARCH_MSM8X60)
 
 int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm);
+
+//slz begin
+unsigned int msm_spm_get_vdd(void);
+//slz end
+
 int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel);
 void msm_spm_reinit(void);
 void msm_spm_allow_x_cpu_set_vdd(bool allowed);
@@ -83,6 +88,13 @@ static inline int msm_spm_set_low_power_mode(unsigned int mode, bool notify_rpm)
 {
 	return -ENOSYS;
 }
+
+//slz begin
+static inline unsigned int msm_spm_get_vdd(void)
+{
+	return 0;
+}
+//slz end
 
 static inline int msm_spm_set_vdd(unsigned int cpu, unsigned int vlevel)
 {

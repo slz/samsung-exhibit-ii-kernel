@@ -558,3 +558,224 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	setup_cpufreq_table();
 }
 
+// slz voltage control changes
+static unsigned int acpuclk_get_current_vdd(void)
+{
+	unsigned int vdd_raw;
+	unsigned int vdd_mv;
+
+	vdd_raw = msm_spm_get_vdd();
+	for (vdd_mv = CONFIG_CPU_FREQ_VDD_LEVELS_MIN; vdd_mv <= CONFIG_CPU_FREQ_VDD_LEVELS_MAX; vdd_mv += 25)
+		if (VDD_RAW(vdd_mv) == vdd_raw)
+			break;
+
+	if (vdd_mv > CONFIG_CPU_FREQ_VDD_LEVELS_MAX)
+		return 0;
+
+	return vdd_mv;
+}
+
+/*
+static struct clkctl_acpu_speed* acpuclk_get_ptr_to_max_freq()
+{
+	struct clkctl_acpu_speed *s;
+
+	s = acpu_freq_tbl;
+	
+	while (s->acpu_clk_khz != 0)
+	{
+		s++;
+	}
+	
+	s--;
+	
+	return s;
+}
+*/
+
+static struct clkctl_acpu_speed* acpuclk_get_ptr_to_freq(unsigned int acpu_khz)
+{
+	struct clkctl_acpu_speed *s;
+
+	for (s = acpu_freq_tbl; s->acpu_clk_khz != 0; s++) {
+		if (s->acpu_clk_khz == acpu_khz)
+			break;
+	}
+
+	return s;
+}
+
+/*
+static unsigned int apuclk_get_max_freq()
+{
+	return acpuclk_get_ptr_to_max_freq()->acpu_khz;
+}
+*/
+
+int change_freq_in_cpufreq_tbl(unsigned int old_acpu_khz, unsigned int new_acpu_khz)
+{
+	int i;
+
+	for (i = 0; cpufreq_tbl[i].frequency != CPUFREQ_TABLE_END; i++)
+	{
+		if (cpufreq_tbl[i].frequency == old_acpu_khz)
+		{
+			cpufreq_tbl[i].frequency = new_acpu_khz;
+			return 0;
+		}
+	}
+
+	pr_err("%s: acpuclk old freq not found, %d\n",
+			__func__, old_acpu_khz);
+		return -2;
+}
+
+int acpuclk_change_freq(unsigned int old_acpu_khz, unsigned int acpu_khz, unsigned int acpu_vdd)
+{
+	struct clkctl_acpu_speed *s;
+
+	if (acpu_vdd > CONFIG_CPU_FREQ_VDD_LEVELS_MAX || acpu_vdd < CONFIG_CPU_FREQ_VDD_LEVELS_MIN) {
+		pr_err("%s: acpuclk vdd out of ranage, %d\n",
+			__func__, acpu_vdd);
+		return -2;
+	}
+
+	mutex_lock(&drv_state.lock);
+	s = acpuclk_get_ptr_to_freq(old_acpu_khz);
+
+	s->acpu_clk_khz = acpu_khz;
+	s->vdd_mv = acpu_vdd;
+	s->vdd_raw = VDD_RAW(acpu_vdd);
+	s->pll_rate->l = acpu_khz / 19200;
+
+	change_freq_in_cpufreq_tbl(old_acpu_khz, acpu_khz);
+
+	mutex_unlock(&drv_state.lock);
+	if (drv_state.current_speed->acpu_clk_khz == acpu_khz)
+		return acpuclk_set_acpu_vdd(s);
+
+	return 0;
+}
+
+static int acpuclk_update_freq_tbl(unsigned int acpu_khz, unsigned int acpu_vdd)
+{
+	struct clkctl_acpu_speed *s;
+
+	acpu_vdd = (acpu_vdd / V_STEP) * V_STEP;	//! regulator only accepts multiples of 25 (mV)
+
+	/* Check frequency table for matching sel/div pair. */
+	for (s = acpu_freq_tbl; s->acpu_clk_khz != 0; s++) {
+		if (s->acpu_clk_khz == acpu_khz)
+			break;
+	}
+	if (s->acpu_clk_khz == 0) {
+		pr_err("%s: acpuclk invalid speed %d\n", __func__, acpu_khz);
+		return -1;
+	}
+	if (acpu_vdd > CONFIG_CPU_FREQ_VDD_LEVELS_MAX || acpu_vdd < CONFIG_CPU_FREQ_VDD_LEVELS_MIN) {
+		pr_err("%s: acpuclk vdd out of ranage, %d\n",
+			__func__, acpu_vdd);
+		return -2;
+	}
+
+	s->vdd_mv = acpu_vdd;
+	s->vdd_raw = VDD_RAW(acpu_vdd);
+	if (drv_state.current_speed->acpu_clk_khz == acpu_khz)
+		return acpuclk_set_acpu_vdd(s);
+
+	return 0;
+}
+
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+
+ssize_t acpuclk_get_vdd_levels_str(char *buf)
+{
+	int i, len = 0;
+	if (buf)
+	{
+		mutex_lock(&drv_state.lock);
+
+		//for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
+		for (i = ARRAY_SIZE(acpu_freq_tbl) - 2; i >= 0; i--)
+		{		
+			if (acpu_freq_tbl[i].use_for_scaling &&
+				acpu_freq_tbl[i].acpu_clk_khz &&
+				acpu_freq_tbl[i].acpu_clk_khz >= cpufreq_tbl[0].frequency)
+					len += sprintf(buf + len, "%lumhz: %lu mV\n", acpu_freq_tbl[i].acpu_clk_khz / 1000, acpu_freq_tbl[i].vdd_mv);
+		}
+		mutex_unlock(&drv_state.lock);
+	}
+	return len;
+}
+
+void acpuclk_set_vdd(unsigned acpu_clk_khz, int vdd)
+{
+	int i;
+	struct clkctl_acpu_speed *current_acpu_freq_tbl_entry;
+
+	vdd = (vdd / V_STEP) * V_STEP;	//! regulator only accepts multiples of 25 (mV)
+
+	mutex_lock(&drv_state.lock);
+	for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
+	{
+		if (acpu_freq_tbl[i].acpu_clk_khz >= cpufreq_tbl[0].frequency)
+		{
+			if (acpu_clk_khz == 0)
+			{
+				acpu_freq_tbl[i].vdd_mv = (unsigned int)min(max(((int)acpu_freq_tbl[i].vdd_mv + vdd), CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+				acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
+				
+			}
+			else if (acpu_freq_tbl[i].acpu_clk_khz == acpu_clk_khz)
+			{
+				acpu_freq_tbl[i].vdd_mv = min(max(vdd, CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+				acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
+				current_acpu_freq_tbl_entry = &(acpu_freq_tbl[i]);
+			}
+		}
+	}
+	mutex_unlock(&drv_state.lock);
+
+	if (drv_state.current_speed->acpu_clk_khz == acpu_clk_khz)
+		acpuclk_set_acpu_vdd(current_acpu_freq_tbl_entry);
+}
+
+/*
+void acpuclk_set_all_vdds(const char *buf)
+{
+    int i = 0, j = 0, next_freq = 0;
+    unsigned long voltage;
+
+    char buffer[20];
+
+    while (1)
+	{
+	    buffer[j] = buf[i];
+
+	    i++;
+	    j++;
+
+	    if (buf[i] == ' ' || buf[i] == '\0')
+		{
+		    buffer[j] = '\0';
+
+		    if (sscanf(buffer, "%lu", &voltage) == 1)
+			{
+			    acpu_freq_tbl[next_freq].vdd_mv = voltage;
+
+			    next_freq++;
+			}
+
+		    if (buf[i] == '\0' || next_freq > num_freqs)
+			{
+			    break;
+			}
+
+		    j = 0;
+		}
+	}
+}
+*/
+#endif
+// slz end voltage control changes
+
