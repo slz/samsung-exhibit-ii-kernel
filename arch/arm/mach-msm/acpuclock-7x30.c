@@ -695,7 +695,6 @@ ssize_t acpuclk_get_vdd_levels_str(char *buf)
 	{
 		mutex_lock(&drv_state.lock);
 
-		//for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
 		for (i = ARRAY_SIZE(acpu_freq_tbl) - 2; i >= 0; i--)
 		{		
 			if (acpu_freq_tbl[i].use_for_scaling &&
@@ -740,42 +739,35 @@ void acpuclk_set_vdd(unsigned acpu_clk_khz, int vdd)
 		acpuclk_set_acpu_vdd(current_acpu_freq_tbl_entry);
 }
 
-/*
-void acpuclk_set_all_vdds(const char *buf)
+ssize_t acpuclk_store_UV_mV_table(const char *buf, size_t count)
 {
-    int i = 0, j = 0, next_freq = 0;
-    unsigned long voltage;
+	unsigned long volt_cur;
+	int i = 0;
+	int ret;
+	char size_cur[16];
 
-    char buffer[20];
+	i = ARRAY_SIZE(acpu_freq_tbl) - 1;
 
-    while (1)
-	{
-	    buffer[j] = buf[i];
-
-	    i++;
-	    j++;
-
-	    if (buf[i] == ' ' || buf[i] == '\0')
+	for(i--; i >= 0; i--) {
+		if(acpu_freq_tbl[i].use_for_scaling &&
+				acpu_freq_tbl[i].acpu_clk_khz)
 		{
-		    buffer[j] = '\0';
-
-		    if (sscanf(buffer, "%lu", &voltage) == 1)
-			{
-			    acpu_freq_tbl[next_freq].vdd_mv = voltage;
-
-			    next_freq++;
+			ret = sscanf(buf, "%lu", &volt_cur);
+			if(ret != 1) {
+				return -EINVAL;
 			}
+			
+			acpu_freq_tbl[i].vdd_mv = min(max(volt_cur, CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+			acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
 
-		    if (buf[i] == '\0' || next_freq > num_freqs)
-			{
-			    break;
-			}
-
-		    j = 0;
+			/* Non-standard sysfs interface: advance buf */
+			ret = sscanf(buf, "%s", size_cur);
+			buf += (strlen(size_cur)+1);
 		}
 	}
+	return count;
 }
-*/
+
 #endif
 // slz end voltage control changes
 

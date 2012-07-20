@@ -767,47 +767,12 @@ static ssize_t store_vdd_levels(struct cpufreq_policy *policy, const char *buf, 
 	return count;
 }
 
-/*
+extern ssize_t acpuclk_store_UV_mV_table(const char *buf, size_t count);
 static ssize_t store_UV_mV_table(struct cpufreq_policy *policy,
 					const char *buf, size_t size)
 {
-    int i = 0, j = 0, next_freq = 0;
-    unsigned long voltage;
-
-    char buffer[20];
-
-    while (1)
-	{
-	    buffer[j] = buf[i];
-
-	    i++;
-	    j++;
-
-	    if (buf[i] == ' ' || buf[i] == '\0')
-		{
-		    buffer[j] = '\0';
-
-		    if (sscanf(buffer, "%lu", &voltage) == 1)
-			{
-			    arm_voltages[next_freq] = voltage * 1000;
-
-			    next_freq++;
-			}
-
-		    if (buf[i] == '\0' || next_freq > num_freqs)
-			{
-			    break;
-			}
-
-		    j = 0;
-		}
-	}
-
-    customvoltage_updatearmvolt(arm_voltages);
-
-    return size;
+    return acpuclk_store_UV_mV_table(buf, size);
 }
-*/
 #endif
 //slz end voltage controls
 
@@ -844,7 +809,7 @@ cpufreq_freq_attr_rw(scaling_setspeed);
 //slz begin
 #ifdef CONFIG_CPU_FREQ_VDD_LEVELS
 cpufreq_freq_attr_rw(vdd_levels);
-cpufreq_freq_attr_ro(UV_mV_table);
+cpufreq_freq_attr_rw(UV_mV_table);
 cpufreq_freq_attr_rw(change_freq);
 #endif
 //slz end
