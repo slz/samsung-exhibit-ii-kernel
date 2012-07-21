@@ -665,51 +665,57 @@ static ssize_t show_vdd_levels(struct cpufreq_policy *policy, char *buf)
 	return show_UV_mV_table(policy, buf);
 }
 
-//extern unsigned int apuclk_get_max_freq();
 static ssize_t show_change_freq(struct cpufreq_policy *policy, char *buf)
 {
 	return 0;
 }
 
 extern int acpuclk_change_freq(unsigned int old_acpu_khz, unsigned int new_acpu_khz, unsigned int acpu_vdd);
+
+/*
+Lets you change one of the frequencies to a new one.
+
+Example:
+echo 'old_freq_khz new_freq_khz vdd_mv' > /sys/devices/system/cpu/cpu0/cpufreq/change_freq
+
+where vdd_mv is the voltage for the new frequency in mV
+
+Limitations:
+New freq won't show up in setcpu or similar apps and isn't usable easily. You have to manually set the new freq
+by doing:
+
+echo new_freq_khz > /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
+*/
 static ssize_t store_change_freq(struct cpufreq_policy *policy, char *buf, size_t count)
 {
-	int i = 0, j;
-	int pair[3] = { 0, 0, 0 };
+	int ret;
+	unsigned int old_freq_khz, new_freq_khz, new_vdd_mv;
 
-	if (count < 1)
-		return 0;
-
-	for (j = 0; i < count; i++)
-	{
-		char c = buf[i];
-		if ((c >= '0') && (c <= '9'))
-		{
-			pair[j] *= 10;
-			pair[j] += (c - '0');
-		}
-		else if ((c == ' ') || (c == '\t'))
-		{
-			if (pair[j] != 0)
-			{
-				j++;
-				if (j > 2)
-					break;
-			}
-		}
-		else
-			break;
+	ret = sscanf(buf, "%u %u %u", &old_freq_khz, &new_freq_khz, &new_vdd_mv);
+	if(ret != 3) {
+		return -EINVAL;
 	}
 
-	if ((pair[0] > 0) && (pair[1] > 0) && (pair[2] > 0))
-		acpuclk_change_freq((unsigned)pair[0], (unsigned)pair[1], pair[2]);
-	else
-		return -EINVAL;
+	acpuclk_change_freq(old_freq_khz, new_freq_khz, new_vdd_mv);
 
 	return count;
 }
 
 extern void acpuclk_set_vdd(unsigned acpu_khz, int vdd);
+
+/*
+Change the cpu voltage through the sysf interface at
+/sys/devices/system/cpu/cpu0/cpufreq/vdd_levels.
+
+Examples:
+
+incrementing/decrementing all voltages by a specified amount (in mV): 
+echo '-25' > /sys/devices/system/cpu/cpu0/cpufreq/vdd_levels
+echo '+25' > /sys/devices/system/cpu/cpu0/cpufreq/vdd_levels
+
+Changing the voltage (in mV; 2nd value) for a specific frequency (in kHz; 1st value): 
+echo '1612800 1300' > /sys/devices/system/cpu/cpu0/cpufreq/vdd_levels
+*/
 static ssize_t store_vdd_levels(struct cpufreq_policy *policy, const char *buf, size_t count)
 {
 	int i = 0, j;

@@ -215,11 +215,11 @@ config CPU_FREQ_VDD_LEVELS
 
 config CPU_FREQ_VDD_LEVELS_MIN
 	int "Min VDD Level"
-	default 500
+	default 750
 
 config CPU_FREQ_VDD_LEVELS_MAX
 	int "Max VDD Level"
-	default 1525
+	default 1500
 #slz end
 
 endif	# CPU_FREQ
