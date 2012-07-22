@@ -9204,4 +9204,5 @@ void synchronize_sched_expedited(void)
 }
 EXPORT_SYMBOL_GPL(synchronize_sched_expedited);
 
+EXPORT_SYMBOL_GPL(nr_running); //slz: added for smartass governor
 #endif /* #else #ifndef CONFIG_SMP */
