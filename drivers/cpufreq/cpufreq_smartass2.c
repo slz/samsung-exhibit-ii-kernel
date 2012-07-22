@@ -34,6 +34,8 @@
 #include <linux/moduleparam.h>
 #include <asm/cputime.h>
 #include <linux/earlysuspend.h>
+#include <linux/notifier.h>
+#include <asm/idle.h>
 
 
 /******************** Tunable parameters: ********************/
@@ -114,7 +116,6 @@ static unsigned int sample_rate_jiffies;
 /*************** End of tunables ***************/
 
 
-static void (*pm_idle_old)(void);
 static atomic_t active_count = ATOMIC_INIT(0);
 
 struct smartass_info_s {
@@ -351,20 +352,22 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 		reset_timer(cpu,this_smartass);
 }
 
-static void cpufreq_idle(void)
+static void cpufreq_smartass_idle_start(void)
 {
 	struct smartass_info_s *this_smartass = &per_cpu(smartass_info, smp_processor_id());
 	struct cpufreq_policy *policy = this_smartass->cur_policy;
 
 	if (!this_smartass->enable) {
-		pm_idle_old();
 		return;
 	}
 
 	if (policy->cur == policy->min && timer_pending(&this_smartass->timer))
 		del_timer(&this_smartass->timer);
+}
 
-	pm_idle_old();
+static void cpufreq_smartass_idle_end(void)
+{
+	struct smartass_info_s *this_smartass = &per_cpu(smartass_info, smp_processor_id());
 
 	if (!timer_pending(&this_smartass->timer))
 		reset_timer(smp_processor_id(), this_smartass);
@@ -662,6 +665,9 @@ static struct attribute_group smartass_attr_group = {
 	.name = "smartass",
 };
 
+void start_smartassv2(void);
+void stop_smartassv2(void);
+
 static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 		unsigned int event)
 {
@@ -694,8 +700,7 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 			if (rc)
 				return rc;
 
-			pm_idle_old = pm_idle;
-			pm_idle = cpufreq_idle;
+			start_smartassv2();
 		}
 
 		if (this_smartass->cur_policy->cur < new_policy->max && !timer_pending(&this_smartass->timer))
@@ -726,13 +731,13 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 		this_smartass->enable = 0;
 		smp_wmb();
 		del_timer(&this_smartass->timer);
-		flush_work(&freq_scale_work);
+
 		this_smartass->idle_exit_time = 0;
 
 		if (atomic_dec_return(&active_count) <= 1) {
 			sysfs_remove_group(cpufreq_global_kobject,
 					   &smartass_attr_group);
-			pm_idle = pm_idle_old;
+			stop_smartassv2();
 		}
 		break;
 	}
@@ -841,12 +846,43 @@ static int __init cpufreq_smartass_init(void)
 	if (!up_wq || !down_wq)
 		return -ENOMEM;
 
-	INIT_WORK(&freq_scale_work, cpufreq_smartass_freq_change_time_work);
-
-	register_early_suspend(&smartass_power_suspend);
-
 	return cpufreq_register_governor(&cpufreq_gov_smartass2);
 }
+
+static int cpufreq_smartass_idle_notifier(struct notifier_block *nb,
+					     unsigned long val,
+					     void *data)
+{
+	switch (val) {
+	case IDLE_START:
+		cpufreq_smartass_idle_start();
+		break;
+	case IDLE_END:
+		cpufreq_smartass_idle_end();
+		break;
+	}
+
+	return 0;
+}
+
+static struct notifier_block cpufreq_smartass_idle_nb = {
+	.notifier_call = cpufreq_smartass_idle_notifier,
+};
+
+void start_smartassv2(void)
+{
+	INIT_WORK(&freq_scale_work, cpufreq_smartass_freq_change_time_work);
+	idle_notifier_register(&cpufreq_smartass_idle_nb);
+	register_early_suspend(&smartass_power_suspend);
+}
+
+void stop_smartassv2(void)
+{
+	idle_notifier_unregister(&cpufreq_smartass_idle_nb);
+	unregister_early_suspend(&smartass_power_suspend);
+	flush_work(&freq_scale_work);
+}
+
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_SMARTASS2
 fs_initcall(cpufreq_smartass_init);
