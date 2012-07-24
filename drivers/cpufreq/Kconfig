@@ -119,6 +119,14 @@ config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 	 scaling for workloads that are latency sensitive, typically interactive
 	 workloads..
 
+config CPU_FREQ_DEFAULT_GOV_INTERACTIVE_SLZ
+	bool "interactive slZ"
+	select CPU_FREQ_GOV_INTERACTIVE_SLZ
+	help
+	 Use the 'interactive slZ' governor as default. This gets full cpu frequency
+	 scaling for workloads that are latency sensitive, typically interactive
+	 workloads..
+
 config CPU_FREQ_DEFAULT_GOV_SMARTASS2
 	bool "smartass2"
 	select CPU_FREQ_GOV_SMARTASS2
@@ -184,6 +192,13 @@ config CPU_FREQ_GOV_ONDEMAND
 
 config CPU_FREQ_GOV_INTERACTIVE
 	tristate "'interactive' cpufreq policy governor"
+	help
+	 'interactive' - This driver adds a dynamic cpufreq policy governor.
+	 Designed for low latency burst workloads. Scaling it done when coming
+	 out of idle instead of polling.
+
+config CPU_FREQ_GOV_INTERACTIVE_SLZ
+	tristate "'interactive_slz' cpufreq policy governor"
 	help
 	 'interactive' - This driver adds a dynamic cpufreq policy governor.
 	 Designed for low latency burst workloads. Scaling it done when coming
