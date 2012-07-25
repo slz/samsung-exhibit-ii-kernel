@@ -200,7 +200,6 @@ static void cpufreq_interactiveslz_timer(unsigned long data)
 		new_freq = pcpu->policy->cur * cpu_load / 100;
 	}
 */
-
 	
 	if (cpu_load > max_cpu_load) {
 		unsigned long max_freq = pref_max_freq;
