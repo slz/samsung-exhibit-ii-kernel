@@ -63,8 +63,8 @@ static struct mutex set_speed_lock;
 #define DEFAULT_GO_HISPEED_LOAD 95
 static unsigned long go_hispeed_load;
 
-#define DEFAULT_PREF_MAX_FREQ 1401600
-static unsigned long pref_max_freq;
+#define DEFAULT_PREFERRED_MAX_FREQ 1401600
+static unsigned long preferred_max_freq;
 
 #define DEFAULT_WAKEUP_FREQ 1401600
 static unsigned long wakeup_freq;
@@ -203,9 +203,9 @@ static void cpufreq_interactiveslz_timer(unsigned long data)
 
 	if (cpu_load > max_cpu_load) {
 	/*
-		unsigned long max_freq = pref_max_freq;
+		unsigned long max_freq = preferred_max_freq;
 	
-		if (pcpu->policy->cur >= pref_max_freq)
+		if (pcpu->policy->cur >= preferred_max_freq)
 			max_freq = pcpu->policy->max;
 	*/
 	
@@ -213,11 +213,11 @@ static void cpufreq_interactiveslz_timer(unsigned long data)
 			new_freq = wakeup_freq;
 		else if (cpu_load >= go_hispeed_load) {
 			if (!ramp_up_step)
-				new_freq = max(pref_max_freq * cpu_load / 100,
+				new_freq = max(preferred_max_freq * cpu_load / 100,
 					pcpu->policy->cur *
 						cpu_load / ideal_cpu_load);
 			else
-				new_freq = max(pref_max_freq * cpu_load / 100,
+				new_freq = max(preferred_max_freq * cpu_load / 100,
 					pcpu->policy->cur + ramp_up_step);
 		} else {
 			if (!ramp_up_step)
@@ -505,10 +505,10 @@ static ssize_t show_go_hispeed_load(struct kobject *kobj,
 	return sprintf(buf, "%lu\n", go_hispeed_load);
 }
 
-static ssize_t show_pref_max_freq(struct kobject *kobj,
+static ssize_t show_preferred_max_freq(struct kobject *kobj,
 				     struct attribute *attr, char *buf)
 {
-	return sprintf(buf, "%lu\n", pref_max_freq);
+	return sprintf(buf, "%lu\n", preferred_max_freq);
 }
 
 static ssize_t show_wakeup_freq(struct kobject *kobj,
@@ -566,7 +566,7 @@ static ssize_t store_go_hispeed_load(struct kobject *kobj,
 	return count;
 }
 
-static ssize_t store_pref_max_freq(struct kobject *kobj,
+static ssize_t store_preferred_max_freq(struct kobject *kobj,
 			struct attribute *attr, const char *buf, size_t count)
 {
 	int ret;
@@ -575,7 +575,7 @@ static ssize_t store_pref_max_freq(struct kobject *kobj,
 	ret = strict_strtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
-	pref_max_freq = val;
+	preferred_max_freq = val;
 	return count;
 }
 
@@ -673,8 +673,8 @@ static ssize_t store_round_new_freq_down(struct kobject *kobj,
 static struct global_attr go_hispeed_load_attr = __ATTR(go_hispeed_load, 0644,
 		show_go_hispeed_load, store_go_hispeed_load);
 
-static struct global_attr pref_max_freq_attr = __ATTR(pref_max_freq, 0644,
-		show_pref_max_freq, store_pref_max_freq);
+static struct global_attr preferred_max_freq_attr = __ATTR(preferred_max_freq, 0644,
+		show_preferred_max_freq, store_preferred_max_freq);
 		
 static struct global_attr wakeup_freq_attr = __ATTR(wakeup_freq, 0644,
 		show_wakeup_freq, store_wakeup_freq);
@@ -745,7 +745,7 @@ static struct attribute *interactiveslz_attributes[] = {
 	&go_hispeed_load_attr.attr,
 	&min_sample_time_attr.attr,
 	&timer_rate_attr.attr,
-	&pref_max_freq_attr.attr,
+	&preferred_max_freq_attr.attr,
 	&wakeup_freq_attr.attr,
 	&max_cpu_load_attr.attr,
 	&min_cpu_load_attr.attr,
@@ -789,8 +789,8 @@ static int cpufreq_governor_interactiveslz(struct cpufreq_policy *policy,
 			smp_wmb();
 		}
 
-		if (!pref_max_freq)
-			pref_max_freq = policy->max;
+		if (!preferred_max_freq)
+			preferred_max_freq = policy->max;
 
 		/*
 		 * Do not register the idle hook and create sysfs
@@ -872,7 +872,7 @@ static int __init cpufreq_interactiveslz_init(void)
 	go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
 	min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
 	timer_rate = DEFAULT_TIMER_RATE;
-	pref_max_freq = DEFAULT_PREF_MAX_FREQ;
+	preferred_max_freq = DEFAULT_PREFERRED_MAX_FREQ;
 	wakeup_freq = DEFAULT_WAKEUP_FREQ;
 	max_cpu_load = DEFAULT_MAX_CPU_LOAD;
 	min_cpu_load = DEFAULT_MIN_CPU_LOAD;
