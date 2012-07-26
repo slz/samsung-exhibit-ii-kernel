@@ -84,10 +84,10 @@ static unsigned long min_cpu_load;
 #define DEFAULT_IDEAL_CPU_LOAD 75
 static unsigned long ideal_cpu_load;
 
-#define DEFAULT_RAMP_UP_STEP 128000
+#define DEFAULT_RAMP_UP_STEP 0
 static unsigned long ramp_up_step;
 
-#define DEFAULT_RAMP_DOWN_STEP 256000
+#define DEFAULT_RAMP_DOWN_STEP 0
 static unsigned long ramp_down_step;
 
 #define DEFAULT_ROUND_NEW_FREQ_DOWN 1
@@ -200,26 +200,34 @@ static void cpufreq_interactiveslz_timer(unsigned long data)
 		new_freq = pcpu->policy->cur * cpu_load / 100;
 	}
 */
-	
+
 	if (cpu_load > max_cpu_load) {
+	/*
 		unsigned long max_freq = pref_max_freq;
 	
 		if (pcpu->policy->cur >= pref_max_freq)
 			max_freq = pcpu->policy->max;
+	*/
 	
 		if (pcpu->policy->cur == pcpu->policy->min)
 			new_freq = wakeup_freq;
 		else if (cpu_load >= go_hispeed_load) {
-			new_freq = max_freq * cpu_load / 100;
+			if (!ramp_up_step)
+				new_freq = max(pref_max_freq * cpu_load / 100,
+					pcpu->policy->cur *
+						cpu_load / ideal_cpu_load);
+			else
+				new_freq = max(pref_max_freq * cpu_load / 100,
+					pcpu->policy->cur + ramp_up_step);
 		} else {
-			if (ideal_cpu_load)
+			if (!ramp_up_step)
 				new_freq = pcpu->policy->cur *
 					cpu_load / ideal_cpu_load;
 			else
 				new_freq = pcpu->policy->cur + ramp_up_step;
 		}		
 	} else if (cpu_load < min_cpu_load) {
-		if (ideal_cpu_load)
+		if (!ramp_down_step)
 			new_freq = pcpu->policy->cur * cpu_load / ideal_cpu_load;
 		else
 			new_freq = pcpu->policy->cur - ramp_down_step;
