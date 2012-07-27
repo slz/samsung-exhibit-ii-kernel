@@ -765,11 +765,12 @@ static void smartass_suspend(int cpu, int suspend)
 		// to allow some time to settle down. Instead we just reset our statistics (and reset the timer).
 		// Eventually, the timer will adjust the frequency if necessary.
 
-		this_smartass->freq_change_time_in_idle =
-			get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
-
-		dprintk(SMARTASS_DEBUG_JUMPS,"SmartassS: suspending at %d\n",policy->cur);
+		dprintk(SMARTASS_DEBUG_JUMPS,"SmartassS: suspending at %d\n",
+			policy->cur);
 	}
+
+	this_smartass->freq_change_time_in_idle =
+		get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
 
 	reset_timer(smp_processor_id(),this_smartass);
 }

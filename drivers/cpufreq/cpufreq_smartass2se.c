@@ -307,8 +307,11 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 	u64 delta_time;
 	u64 total_delta_idle;
 	u64 total_delta_time;
+	u64 prev_total_delta_idle;
+	u64 prev_total_delta_time;
 	int cpu_load;
 	int load_since_change;
+	int prev_load_since_change;
 	int old_freq;
 	u64 update_time;
 	u64 now_idle;
@@ -349,6 +352,20 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 	else
 		load_since_change = 100 * (unsigned int)(total_delta_time - total_delta_idle) /
 								(unsigned int)total_delta_time;
+								
+	//total_delta that doesn't consider most recent sample
+	prev_total_delta_idle = (unsigned int) cputime64_sub(this_smartass->time_in_idle,
+						this_smartass->freq_change_time_in_idle);
+	prev_total_delta_time = (unsigned int) cputime64_sub(this_smartass->idle_exit_time,
+						  this_smartass->freq_change_time);
+
+	if ((prev_total_delta_time == 0) || (prev_total_delta_idle > prev_total_delta_time))
+		prev_load_since_change = 0;
+	else
+		prev_load_since_change = 100 *
+			(unsigned int)(prev_total_delta_time - prev_total_delta_idle) /
+							(unsigned int)prev_total_delta_time;
+	// end new total_delta
 	
 	//slz weighted moving average
 	if (moving_avg_sample_size) {
@@ -446,7 +463,10 @@ static void cpufreq_smartass_idle_start(void)
 	}
 
 	if (policy->cur == policy->min && timer_pending(&this_smartass->timer))
+	{
 		del_timer(&this_smartass->timer);
+		this_smartass->idle_exit_time = 0;
+	}
 }
 
 static void cpufreq_smartass_idle_end(void)
@@ -455,6 +475,14 @@ static void cpufreq_smartass_idle_end(void)
 
 	if (!timer_pending(&this_smartass->timer))
 		reset_timer(smp_processor_id(), this_smartass);
+}
+
+inline static void update_freq_change_stats(struct smartass_info_s *this_smartass, unsigned int cpu)
+{
+	this_smartass->freq_change_time_in_idle =
+		get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
+	
+	this_smartass->avg_cpu_load = -1;
 }
 
 /* We use the same work function to sale up and down */
@@ -550,9 +578,7 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 		new_freq = target_freq(policy,this_smartass,new_freq,old_freq,relation);
 		if (new_freq)
 		{
-			this_smartass->freq_change_time_in_idle =
-				get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
-			this_smartass->avg_cpu_load = -1;
+			update_freq_change_stats();
 		}
 
 		// reset timer:
@@ -560,12 +586,7 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 			reset_timer(cpu,this_smartass);
 		// if we are maxed out, it is pointless to use the timer
 		// (idle cycles wake up the timer when the timer comes)
-		else {
-			//slz: added b/c total_delta_time isn't being reset
-			//when moving to max freq
-			//his_smartass->time_in_idle =
-			//	get_cpu_idle_time_us(cpu, &this_smartass->idle_exit_time);
-				
+		else {				
 			if (timer_pending(&this_smartass->timer))
 				del_timer(&this_smartass->timer);
 		}
@@ -907,8 +928,7 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 		if (!this_smartass->freq_table)
 			printk(KERN_WARNING "Smartass: no frequency table for cpu %d?!\n",cpu);
 			
-		this_smartass->freq_change_time_in_idle = get_cpu_idle_time_us(cpu,
-			&this_smartass->freq_change_time);
+		update_freq_change_stats();
 
 		smp_wmb();
 
@@ -936,11 +956,15 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 			dprintk(SMARTASS_DEBUG_JUMPS,"SmartassI: jumping to new max freq: %d\n",new_policy->max);
 			__cpufreq_driver_target(this_smartass->cur_policy,
 						new_policy->max, CPUFREQ_RELATION_H);
+						
+			update_freq_change_stats();
 		}
 		else if (this_smartass->cur_policy->cur < new_policy->min) {
 			dprintk(SMARTASS_DEBUG_JUMPS,"SmartassI: jumping to new min freq: %d\n",new_policy->min);
 			__cpufreq_driver_target(this_smartass->cur_policy,
 						new_policy->min, CPUFREQ_RELATION_L);
+						
+			update_freq_change_stats();
 		}
 
 		if (this_smartass->cur_policy->cur < new_policy->max && !timer_pending(&this_smartass->timer))
@@ -989,11 +1013,10 @@ static void smartass_suspend(int cpu, int suspend)
 		// to allow some time to settle down. Instead we just reset our statistics (and reset the timer).
 		// Eventually, the timer will adjust the frequency if necessary.
 
-		this_smartass->freq_change_time_in_idle =
-			get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
-
 		dprintk(SMARTASS_DEBUG_JUMPS,"SmartassS: suspending at %d\n",policy->cur);
 	}
+	
+	update_freq_change_stats();
 
 	reset_timer(smp_processor_id(),this_smartass);
 }
