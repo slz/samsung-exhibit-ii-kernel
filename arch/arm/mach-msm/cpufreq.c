@@ -200,6 +200,10 @@ static int __cpuinit msm_cpufreq_init(struct cpufreq_policy *policy)
 	policy->max = CONFIG_MSM_CPU_FREQ_MAX;
 #endif
 
+	//slz begin
+	policy->max = 1024000; // set the default bootup speed
+	//slz end
+
 	cur_freq = acpuclk_get_rate(policy->cpu);
 	if (cpufreq_frequency_table_target(policy, table, cur_freq,
 				CPUFREQ_RELATION_H, &index)) {

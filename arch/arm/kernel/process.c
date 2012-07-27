@@ -29,7 +29,7 @@
 #include <linux/utsname.h>
 #include <linux/uaccess.h>
 
-#include <asm/leds.h>
+//#include <asm/leds.h> //slz
 #include <asm/processor.h>
 #include <asm/system.h>
 #include <asm/thread_notify.h>
@@ -146,8 +146,9 @@ void cpu_idle(void)
 
 	/* endless idle loop with no priority at all */
 	while (1) {
+		idle_notifier_call_chain(IDLE_START); //slz added line
 		tick_nohz_stop_sched_tick(1);
-		leds_event(led_idle_start);
+		//leds_event(led_idle_start); //slz
 		while (!need_resched()) {
 #ifdef CONFIG_HOTPLUG_CPU
 			if (cpu_is_offline(smp_processor_id()))
@@ -171,8 +172,9 @@ void cpu_idle(void)
 				local_irq_enable();
 			}
 		}
-		leds_event(led_idle_end);
+		//leds_event(led_idle_end); //slz
 		tick_nohz_restart_sched_tick();
+		idle_notifier_call_chain(IDLE_END); //slz added
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();

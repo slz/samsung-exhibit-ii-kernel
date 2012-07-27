@@ -94,12 +94,44 @@ static struct clock_state drv_state = { 0 };
 /* Switch to this when reprogramming PLL2 */
 static struct clkctl_acpu_speed *backup_s;
 
+//slz begin
+/*
+Original values
+
 static struct pll pll2_tbl[] = {
-	{  42, 0, 1, 0 }, /*  806 MHz */
-	{  53, 1, 3, 0 }, /* 1024 MHz */
-	{ 125, 0, 1, 1 }, /* 1200 MHz */
-	{  73, 0, 1, 0 }, /* 1401 MHz */
+	{  42, 0, 1, 0 }, //  806 MHz
+	{  53, 1, 3, 0 }, // 1024 MHz
+	{ 125, 0, 1, 1 }, // 1200 MHz
+	{  73, 0, 1, 0 }, // 1401 MHz
 };
+*/
+
+/*
+Tips for adding new pll values:
+
+The first pll number should be equal to the frequency
+in khz divided by 19200.
+
+For example, for 1.8ghz, we have the entry shown below:
+{  94, 1, 3, 0 }, // 1804800 KHz
+
+1804800 / 19200 = 94
+
+The other numbers (1, 3, 0) can be left the same for any new frequency.
+*/
+static struct pll pll2_tbl[] = {
+    {  42, 0, 1, 0 }, /*  806400 KHz */
+    {  53, 1, 3, 0 }, /* 1024000 KHz */
+    {  58, 1, 3, 0 }, /* 1113600 KHz */
+    {  63, 1, 3, 0 }, /* 1209600 KHz */
+    {  68, 1, 3, 0 }, /* 1305600 KHz */
+    {  73, 1, 3, 0 }, /* 1401600 KHz */
+    {  79, 1, 3, 0 }, /* 1516800 KHz */
+    {  84, 1, 3, 0 }, /* 1612800 KHz */
+    {  89, 1, 3, 0 }, /* 1708800 KHz */
+    {  94, 1, 3, 0 }, /* 1804800 KHz */
+};
+//slz end
 
 /* Use negative numbers for sources that can't be enabled/disabled */
 #define SRC_LPXO (-2)
@@ -123,11 +155,27 @@ static struct clkctl_acpu_speed acpu_freq_tbl[] = {
 	/*
 	 * AXI has MSMC1 implications. See above.
 	 */
+//slz begin
+/*
+Original values
+
 	{ 1, 806400,  PLL_2, 3, 0, UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
 	{ 1, 1024000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[1]},
 	{ 1, 1200000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
 	{ 1, 1401600, PLL_2, 3, 0, UINT_MAX, 1275, VDD_RAW(1275), &pll2_tbl[3]},
+*/
+	{ 1,  806400, PLL_2,   3, 0,  UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
+	{ 1, 1024000, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[1]},
+	{ 1, 1113600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
+	{ 1, 1209600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[3]},
+	{ 1, 1305600, PLL_2,   3, 0,  UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[4]},
+	{ 1, 1401600, PLL_2,   3, 0,  UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[5]},
+	{ 1, 1516800, PLL_2,   3, 0,  UINT_MAX, 1300, VDD_RAW(1300), &pll2_tbl[6]},
+	{ 1, 1612800, PLL_2,   3, 0,  UINT_MAX, 1350, VDD_RAW(1350), &pll2_tbl[7]},
+	{ 1, 1708800, PLL_2,   3, 0,  UINT_MAX, 1400, VDD_RAW(1400), &pll2_tbl[8]},
+	{ 1, 1804800, PLL_2,   3, 0,  UINT_MAX, 1450, VDD_RAW(1450), &pll2_tbl[9]},
 	{ 0 }
+//slz end
 };
 
 #define POWER_COLLAPSE_KHZ MAX_AXI_KHZ
@@ -146,11 +194,19 @@ unsigned long acpuclk_wait_for_irq(void)
 	return ret;
 }
 
+extern struct cpufreq_policy *cpufreq_cpu_get(unsigned int cpu);
+
 #define MAX_CLK 1401600
 unsigned long acpuclk_usr_set_max(void)
 {
 	int ret = acpuclk_get_rate(smp_processor_id());
-	acpuclk_set_rate(smp_processor_id(), MAX_CLK, SETRATE_CPUFREQ);
+
+	//slz begin
+	/* this was changing the clk to 1401600 regardless of what the
+	frequency was set to previously */
+	//acpuclk_set_rate(smp_processor_id(), MAX_CLK, SETRATE_CPUFREQ);
+	//slz end
+
 	return ret;
 }
 
@@ -201,6 +257,20 @@ static void acpuclk_set_src(const struct clkctl_acpu_speed *s)
 	reg_clkctl |= s->acpu_src_sel << (4 + 8 * src_sel);
 	reg_clkctl |= s->acpu_src_div << (0 + 8 * src_sel);
 	writel(reg_clkctl, SCSS_CLK_CTL_ADDR);
+
+	//slz begin
+    /* Program PLL2 L val for overclocked speeds. */
+    if(s->src == PLL_2) {
+        unsigned int pll2_l_new;
+
+        if (s->pll_rate && s->pll_rate->l)
+            pll2_l_new = s->pll_rate->l;
+        else
+            pll2_l_new = s->acpu_clk_khz / 19200;
+
+        writel(pll2_l_new, PLL2_L_VAL_ADDR);
+    }
+    //slz end
 
 	/* Toggle clock source. */
 	reg_clksel ^= 1;
@@ -481,8 +551,12 @@ void __init pll2_fixup(void)
 		if (speed->src != PLL_2)
 			backup_s = speed;
 		if (speed->pll_rate && speed->pll_rate->l == pll2_l) {
-			speed++;
-			speed->acpu_clk_khz = 0;
+            		//slz begin
+			/* Commented out so our new overclocked frequencies won't be removed
+			from the frequency table */ 
+			//speed++;
+			//speed->acpu_clk_khz = 0;
+			//slz end
 			return;
 		}
 	}
@@ -506,4 +580,234 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	lpj_init();
 	setup_cpufreq_table();
 }
+
+// slz voltage control changes
+/* slz: don't think this is actually used */
+static unsigned int acpuclk_get_current_vdd(void)
+{
+	unsigned int vdd_raw;
+	unsigned int vdd_mv;
+
+	vdd_raw = msm_spm_get_vdd();
+	for (vdd_mv = CONFIG_CPU_FREQ_VDD_LEVELS_MIN; vdd_mv <= CONFIG_CPU_FREQ_VDD_LEVELS_MAX; vdd_mv += 25)
+		if (VDD_RAW(vdd_mv) == vdd_raw)
+			break;
+
+	if (vdd_mv > CONFIG_CPU_FREQ_VDD_LEVELS_MAX)
+		return 0;
+
+	return vdd_mv;
+}
+
+/*
+Returns the entry in the acpu frequency table for the passed in speed.
+*/
+static struct clkctl_acpu_speed* acpuclk_get_ptr_to_freq(unsigned int acpu_khz)
+{
+	struct clkctl_acpu_speed *s;
+
+	for (s = acpu_freq_tbl; s->acpu_clk_khz != 0; s++) {
+		if (s->acpu_clk_khz == acpu_khz)
+		{
+			return s;
+		}
+	}
+
+	return NULL;
+}
+
+int change_freq_in_cpufreq_tbl(unsigned int old_acpu_khz, unsigned int new_acpu_khz)
+{
+	int i;
+
+	for (i = 0; cpufreq_tbl[i].frequency != CPUFREQ_TABLE_END; i++)
+	{
+		if (cpufreq_tbl[i].frequency == old_acpu_khz)
+		{
+			cpufreq_tbl[i].frequency = new_acpu_khz;
+			return 0;
+		}
+	}
+
+	pr_err("%s: acpuclk old freq not found, %d\n",
+			__func__, old_acpu_khz);
+		return -2;
+}
+
+int acpuclk_change_freq(unsigned int old_acpu_khz, unsigned int acpu_khz, unsigned int acpu_vdd)
+{
+	struct clkctl_acpu_speed *s;
+
+	mutex_lock(&drv_state.lock);
+	s = acpuclk_get_ptr_to_freq(old_acpu_khz);
+
+	if (NULL == s)
+	{
+		mutex_unlock(&drv_state.lock);
+		return -2;
+	}
+
+	s->acpu_clk_khz = acpu_khz;
+	s->vdd_mv = min(max(acpu_vdd, CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+	s->vdd_raw = VDD_RAW(s->vdd_mv);
+	s->pll_rate->l = acpu_khz / 19200;
+
+	change_freq_in_cpufreq_tbl(old_acpu_khz, acpu_khz);
+
+	mutex_unlock(&drv_state.lock);
+
+	return 0;
+}
+
+/* slz: brought over from cyanogenmod. not currently used for anything. */
+static int acpuclk_update_freq_tbl(unsigned int acpu_khz, unsigned int acpu_vdd)
+{
+	struct clkctl_acpu_speed *s;
+
+	acpu_vdd = (acpu_vdd / V_STEP) * V_STEP;	//! regulator only accepts multiples of 25 (mV)
+
+	/* Check frequency table for matching sel/div pair. */
+	for (s = acpu_freq_tbl; s->acpu_clk_khz != 0; s++) {
+		if (s->acpu_clk_khz == acpu_khz)
+			break;
+	}
+	if (s->acpu_clk_khz == 0) {
+		pr_err("%s: acpuclk invalid speed %d\n", __func__, acpu_khz);
+		return -1;
+	}
+	if (acpu_vdd > CONFIG_CPU_FREQ_VDD_LEVELS_MAX || acpu_vdd < CONFIG_CPU_FREQ_VDD_LEVELS_MIN) {
+		pr_err("%s: acpuclk vdd out of ranage, %d\n",
+			__func__, acpu_vdd);
+		return -2;
+	}
+
+	s->vdd_mv = acpu_vdd;
+	s->vdd_raw = VDD_RAW(acpu_vdd);
+	if (drv_state.current_speed->acpu_clk_khz == acpu_khz)
+		return acpuclk_set_acpu_vdd(s);
+
+	return 0;
+}
+
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+
+/*
+Displays all of the frequencies and voltages in following format:
+
+1804mhz: 1400 mV
+1708mhz: 1350 mV
+1612mhz: 1300 mV
+
+This format is used by apps like setcpu to display
+the current voltages.
+*/
+ssize_t acpuclk_get_vdd_levels_str(char *buf)
+{
+	int i, len = 0;
+	if (buf)
+	{
+		mutex_lock(&drv_state.lock);
+
+		for (i = ARRAY_SIZE(acpu_freq_tbl) - 2; i >= 0; i--)
+		{		
+			if (acpu_freq_tbl[i].use_for_scaling &&
+				acpu_freq_tbl[i].acpu_clk_khz &&
+				acpu_freq_tbl[i].acpu_clk_khz >= cpufreq_tbl[0].frequency)
+					len += sprintf(buf + len, "%umhz: %u mV\n", acpu_freq_tbl[i].acpu_clk_khz / 1000, acpu_freq_tbl[i].vdd_mv);
+		}
+		mutex_unlock(&drv_state.lock);
+	}
+	return len;
+}
+
+/*
+Change the voltage (in mV) for the specified frequency (in kHz).
+
+If acpu_clk_khz is 0, increment or decrement all frequencies
+by the amount specified in vdd.
+
+For more details, see the store_vdd_levels function in drivers/cpufreq/cpufreq.c
+*/
+void acpuclk_set_vdd(unsigned acpu_clk_khz, int vdd)
+{
+	int i;
+
+	vdd = (vdd / V_STEP) * V_STEP;	//! regulator only accepts multiples of 25 (mV)
+
+	mutex_lock(&drv_state.lock);
+	for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
+	{
+		if (acpu_freq_tbl[i].acpu_clk_khz >= cpufreq_tbl[0].frequency)
+		{
+			if (acpu_clk_khz == 0)
+			{
+				// increment or decrement the voltage by the specified amount
+				acpu_freq_tbl[i].vdd_mv = (unsigned int)min(max(((int)acpu_freq_tbl[i].vdd_mv + vdd), CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+				acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
+				
+			}
+			else if (acpu_freq_tbl[i].acpu_clk_khz == acpu_clk_khz)
+			{
+				acpu_freq_tbl[i].vdd_mv = min(max(vdd, CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+				acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
+			}
+		}
+	}
+	mutex_unlock(&drv_state.lock);
+
+	if (drv_state.current_speed->acpu_clk_khz == acpu_clk_khz)
+		acpuclk_set_acpu_vdd(drv_state.current_speed);
+}
+
+/*
+Changes the voltages for all of the cpu frequencies.
+
+buf should be a string of all the new voltages (specified in mv in
+descending order with a space between each voltage).
+
+Apps like setcpu and voltage control use the sysf interface at
+/sys/devices/system/cpu/cpu0/cpufreq/UV_mV_table to change
+the voltages, but you can also do it manually as shown below.
+
+For example, if the kernel had 3 frequencies (1.2, 1.1, and 1.0 ghz)
+and you wanted to change their voltages to 1200, 1100, and 1000mv respectively,
+you could use the following command:
+
+echo "1200 1100 1000" > /sys/devices/system/cpu/cpu0/cpufreq/UV_mV_table
+*/
+ssize_t acpuclk_store_UV_mV_table(const char *buf, size_t count)
+{
+	unsigned long volt_cur;
+	int i = 0;
+	int ret;
+	char size_cur[16];
+
+	i = ARRAY_SIZE(acpu_freq_tbl) - 1;
+
+	for(i--; i >= 0; i--) {
+		if(acpu_freq_tbl[i].use_for_scaling &&
+				acpu_freq_tbl[i].acpu_clk_khz)
+		{
+			ret = sscanf(buf, "%lu", &volt_cur);
+			if(ret != 1) {
+				return -EINVAL;
+			}
+			
+			acpu_freq_tbl[i].vdd_mv = min(max(volt_cur, CONFIG_CPU_FREQ_VDD_LEVELS_MIN), CONFIG_CPU_FREQ_VDD_LEVELS_MAX);
+			acpu_freq_tbl[i].vdd_raw = VDD_RAW(acpu_freq_tbl[i].vdd_mv);
+
+			/* Move buffer to next voltage */
+			ret = sscanf(buf, "%s", size_cur);
+			buf += (strlen(size_cur)+1);
+		}
+	}
+
+	// switch to the new voltage for the current frequency (incase we just changed it)
+	acpuclk_set_acpu_vdd(acpuclk_get_ptr_to_freq(drv_state.current_speed->acpu_clk_khz));
+
+	return count;
+}
+
+#endif
+// slz end voltage control changes
 
