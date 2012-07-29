@@ -43,7 +43,7 @@
  * towards the ideal frequency and slower after it has passed it. Similarly,
  * lowering the frequency towards the ideal frequency is faster than below it.
  */
-#define DEFAULT_AWAKE_IDEAL_FREQ 0
+#define DEFAULT_AWAKE_IDEAL_FREQ 806400
 static unsigned int awake_ideal_freq;
 
 /*
@@ -87,7 +87,7 @@ static unsigned long min_cpu_load;
  * The minimum amount of time to spend at a frequency before we can ramp up.
  * Notice we ignore this when we are below the ideal frequency.
  */
-#define DEFAULT_UP_RATE_US 24000;
+#define DEFAULT_UP_RATE_US 48000;
 static unsigned long up_rate_us;
 
 /*
@@ -119,13 +119,13 @@ static unsigned int round_new_freq_down;
 #define DEFAULT_ABSOLUTE_MAX_CPU_LOAD 95
 static unsigned int absolute_max_cpu_load;
 
-#define DEFAULT_IDEAL_CPU_LOAD 75
+#define DEFAULT_IDEAL_CPU_LOAD 80
 static unsigned int ideal_cpu_load;
 
-#define DEFAULT_MOVING_AVG_SAMPLE_SIZE 5
+#define DEFAULT_MOVING_AVG_SAMPLE_SIZE 10
 static unsigned int moving_avg_sample_size;
 
-#define DEFAULT_IGNORE_SHORT_LOAD_BURSTS 1
+#define DEFAULT_IGNORE_SHORT_LOAD_BURSTS 0
 static unsigned int ignore_short_load_bursts;
 
 /*************** End of tunables ***************/
@@ -141,12 +141,14 @@ struct smartass_info_s {
 	u64 idle_exit_time;
 	u64 freq_change_time;
 	u64 freq_change_time_in_idle;
+	//u64 time_since_freq_change_to_last_timer;
 	int cur_cpu_load;
 	int old_freq;
 	int ramp_dir;
 	unsigned int enable;
 	int ideal_speed;
 	int avg_cpu_load;
+	int num_samples_since_freq_change;
 };
 static DEFINE_PER_CPU(struct smartass_info_s, smartass_info);
 
@@ -271,9 +273,12 @@ inline static int target_freq(struct cpufreq_policy *policy, struct smartass_inf
 			    && !cpufreq_frequency_table_target(policy,table,new_freq,
 							       CPUFREQ_RELATION_L,&index))
 				target = table[index].frequency;
+				
+			// slz: this was causing us to ramp down too far when ramping down
+			// from 800 mhz to 400 or 500. i'd rather stay at the same speed
+			// than to go down too far and have to ramp back up again.
+			//
 			/*
-			//slz: this was causing us to ramp down too far when ramping down
-			// from 800 mhz to 400 or 500
 			// simlarly for ramping down:
 			else if (new_freq < old_freq && prefered_relation==CPUFREQ_RELATION_L
 				&& !cpufreq_frequency_table_target(policy,table,new_freq,
@@ -286,8 +291,11 @@ inline static int target_freq(struct cpufreq_policy *policy, struct smartass_inf
 			// We should not get here:
 			// If we got here we tried to change to a validated new_freq which is different
 			// from old_freq, so there is no reason for us to remain at same frequency.
+			/*
 			printk(KERN_WARNING "Smartass: cpu_load: %d frequency change failed: %d to %d => %d\n",
 			       this_smartass->cur_cpu_load, old_freq,new_freq,target);
+			*/
+			
 			return 0;
 		}
 	}
@@ -307,20 +315,20 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 	u64 delta_time;
 	u64 total_delta_idle;
 	u64 total_delta_time;
-	u64 prev_total_delta_idle;
-	u64 prev_total_delta_time;
 	int cpu_load;
-	int load_since_change;
-	int prev_load_since_change;
+	int load_since_freq_change;
 	int old_freq;
 	u64 update_time;
 	u64 now_idle;
 	int queued_work = 0;
 	struct smartass_info_s *this_smartass = &per_cpu(smartass_info, cpu);
 	struct cpufreq_policy *policy = this_smartass->cur_policy;
+	//u64 time_since_freq_change_to_last_timer;
+	int avg_cpu_load;
 
 	now_idle = get_cpu_idle_time_us(cpu, &update_time);
 	old_freq = policy->cur;
+	//time_since_freq_change_to_last_timer = this_smartass->time_since_freq_change_to_last_timer;
 
 	if (this_smartass->idle_exit_time == 0 || update_time == this_smartass->idle_exit_time)
 		return;
@@ -341,69 +349,81 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 		cpu_load = 100 * (unsigned int)(delta_time - delta_idle) /
 			(unsigned int)delta_time;
 	
-	//slz begin	
+	//slz begin
+	//slz: move this to where it doesn't get run all the time once
+	//debugging is complete
+	//note: total_delta_time is used to check the up and down limit time
 	total_delta_idle = (unsigned int) cputime64_sub(now_idle,
 						this_smartass->freq_change_time_in_idle);
 	total_delta_time = (unsigned int) cputime64_sub(update_time,
 						  this_smartass->freq_change_time);
 
 	if ((total_delta_time == 0) || (total_delta_idle > total_delta_time))
-		load_since_change = 0;
+		load_since_freq_change = 0;
 	else
-		load_since_change = 100 * (unsigned int)(total_delta_time - total_delta_idle) /
-								(unsigned int)total_delta_time;
-								
-	//total_delta that doesn't consider most recent sample
-	prev_total_delta_idle = (unsigned int) cputime64_sub(this_smartass->time_in_idle,
-						this_smartass->freq_change_time_in_idle);
-	prev_total_delta_time = (unsigned int) cputime64_sub(this_smartass->idle_exit_time,
-						  this_smartass->freq_change_time);
-
-	if ((prev_total_delta_time == 0) || (prev_total_delta_idle > prev_total_delta_time))
-		prev_load_since_change = 0;
-	else
-		prev_load_since_change = 100 *
-			(unsigned int)(prev_total_delta_time - prev_total_delta_idle) /
-							(unsigned int)prev_total_delta_time;
-	// end new total_delta
+		load_since_freq_change = 100 *
+			(unsigned int)(total_delta_time - total_delta_idle) /
+						(unsigned int)total_delta_time;
+	//end move this					
+	
+	
+	// check if our timer has been running regularly
+	/*						
+	if (time_since_freq_change_to_last_timer > 0)
+	{
+		if (1.01 * cputime64_add(time_since_freq_change_to_last_timer, total_delta_idle) <
+				total_delta_time)	
+			this_smartass->avg_cpu_load = -1;
+	} else if (total_delta_time > delta_time)
+		this_smartass->avg_cpu_load = -1;
+	*/
+	
+	avg_cpu_load = this_smartass->avg_cpu_load;
 	
 	//slz weighted moving average
-	if (moving_avg_sample_size) {
-		if (total_delta_time >= up_rate_us || total_delta_time >= down_rate_us) {
-			int avg_cpu_load = this_smartass->avg_cpu_load;
+	if (old_freq < policy->max && avg_cpu_load >= 0 &&
+			old_freq > policy->min && moving_avg_sample_size) {
+		//if (total_delta_time >= up_rate_us || total_delta_time >= down_rate_us) {
 		
-			if (avg_cpu_load < 0) {
-				avg_cpu_load = load_since_change;
-			}
-		
-			// caculate exponential moving average for cpu_load
-			load_since_change = ((int)(cpu_load - avg_cpu_load) *
-				2 / (int)(moving_avg_sample_size + 1)) + avg_cpu_load;
-			
-			/*	
-			dprintk(SMARTASS_DEBUG_LOAD,
-				"smartassT @ %d (in wma): sa->avg_cpu_load %d avg_cpu_load %d cpu_load %d new_load_since_change %d \n",
-				old_freq, this_smartass->avg_cpu_load, avg_cpu_load,
-				cpu_load, load_since_change);
-			*/
+		int sample_size = this_smartass->num_samples_since_freq_change + 1;
+	
+		if (sample_size > moving_avg_sample_size)
+			sample_size = moving_avg_sample_size;
+		else if (sample_size > 1)
+			++(this_smartass->num_samples_since_freq_change);
+		else {
+			sample_size = this_smartass->num_samples_since_freq_change = 2;
 		}
+
+		// caculate exponential moving average for cpu_load
+		load_since_freq_change = ((int)(cpu_load - avg_cpu_load) *
+			2 / (int)(sample_size + 1)) + avg_cpu_load;
+		
+		dprintk(SMARTASS_DEBUG_LOAD,
+			"smartassT @ %d (in wma): avg_cpu_load %d cpu_load %d new_load_since_freq_change %d sample_size %d\n",
+			old_freq, avg_cpu_load,
+			cpu_load, load_since_freq_change, sample_size);
+		//}
 	}
 	//slz end wma
 
-	dprintk(SMARTASS_DEBUG_LOAD,"smartassT @ %d: recent_load %d load_since_change: %d (delta_time %llu total_delta_time %llu)\n",
-		old_freq,cpu_load,load_since_change,delta_time,total_delta_time);
+	dprintk(SMARTASS_DEBUG_LOAD,"smartassT @ %d: recent_load %d avg_load: %d (delta_time %llu total_delta_time %llu)\n",
+		old_freq,cpu_load,load_since_freq_change,delta_time,total_delta_time);
 
 	this_smartass->cur_cpu_load = cpu_load;
 	this_smartass->old_freq = old_freq;
-	this_smartass->avg_cpu_load = load_since_change;
+	avg_cpu_load = this_smartass->avg_cpu_load = load_since_freq_change;
+	//this_smartass->time_since_freq_change_to_last_timer = total_delta_time;
 
 	/*
 	 * Choose greater of short-term load (since last idle timer
 	 * started or timer function re-armed itself) or long-term load
 	 * (since last frequency change).
 	 */
-	if (ignore_short_load_bursts || (load_since_change > cpu_load))
-		cpu_load = load_since_change;
+	//if (ignore_short_load_bursts || (load_since_freq_change > cpu_load))
+	//	cpu_load = load_since_freq_change;
+	
+	
 		
 	//this_smartass->cur_cpu_load = cpu_load;
 	//this_smartass->old_freq = old_freq;
@@ -413,30 +433,38 @@ static void cpufreq_smartass_timer(unsigned long cpu)
 	// Scale up if load is above max or if there where no idle cycles since coming out of idle,
 	// additionally, if we are at or above the ideal_speed, verify we have been at this frequency
 	// for at least up_rate_us:
-	if (cpu_load > max_cpu_load || (delta_idle == 0 && !ignore_short_load_bursts))
+	if ( // begin complex if logic
+		old_freq < policy->max &&
+		(
+			(cpu_load > absolute_max_cpu_load && !ignore_short_load_bursts) ||
+		 	(
+		 		(avg_cpu_load > max_cpu_load && cpu_load > max_cpu_load) &&
+		 		(
+		 			//old_freq < this_smartass->ideal_speed ||
+		 			total_delta_time >= up_rate_us
+		 		)
+		 	)
+		)
+	   ) // end complex if logic
 	{
-		if (old_freq < policy->max &&
-			 (old_freq < this_smartass->ideal_speed ||
-			  	(delta_idle == 0 && !ignore_short_load_bursts) ||
-			  	cputime64_sub(update_time, this_smartass->freq_change_time) >= up_rate_us))
-		{
-			dprintk(SMARTASS_DEBUG_ALG,"smartassT @ %d ramp up: load %d (delta_idle %llu)\n",
-				old_freq,cpu_load,delta_idle);
-			this_smartass->ramp_dir = 1;
-			work_cpumask_set(cpu);
-			queue_work(up_wq, &freq_scale_work);
-			queued_work = 1;
-		}
-		else this_smartass->ramp_dir = 0;
+		dprintk(SMARTASS_DEBUG_ALG,
+			"smartassT @ %d ramp up: load %d avg_cpu_load %d (delta_idle %llu)\n",
+			old_freq,cpu_load,avg_cpu_load, delta_idle);
+		this_smartass->ramp_dir = 1;
+		work_cpumask_set(cpu);
+		queue_work(up_wq, &freq_scale_work);
+		queued_work = 1;
 	}
 	// Similarly for scale down: load should be below min and if we are at or below ideal
 	// frequency we require that we have been at this frequency for at least down_rate_us:
-	else if (cpu_load < min_cpu_load && old_freq > policy->min &&
-		 ((this_smartass->ideal_speed && (old_freq > this_smartass->ideal_speed)) ||
-		  cputime64_sub(update_time, this_smartass->freq_change_time) >= down_rate_us))
+	else if (old_freq > policy->min &&
+			avg_cpu_load < min_cpu_load &&
+			cpu_load < min_cpu_load &&
+		 	( //(this_smartass->ideal_speed && (old_freq > this_smartass->ideal_speed)) ||
+		  		total_delta_time >= down_rate_us))
 	{
-		dprintk(SMARTASS_DEBUG_ALG,"smartassT @ %d ramp down: load %d (delta_idle %llu)\n",
-			old_freq,cpu_load,delta_idle);
+		dprintk(SMARTASS_DEBUG_ALG,"smartassT @ %d ramp down: load %d avg_cpu_load %d (delta_idle %llu)\n",
+			old_freq,cpu_load,avg_cpu_load,delta_idle);
 		this_smartass->ramp_dir = -1;
 		work_cpumask_set(cpu);
 		queue_work(down_wq, &freq_scale_work);
@@ -483,6 +511,8 @@ inline static void update_freq_change_stats(struct smartass_info_s *this_smartas
 		get_cpu_idle_time_us(cpu,&this_smartass->freq_change_time);
 	
 	this_smartass->avg_cpu_load = -1;
+	this_smartass->num_samples_since_freq_change = 0;
+	//this_smartass->time_since_freq_change_to_last_timer = 0;
 }
 
 /* We use the same work function to sale up and down */
@@ -493,9 +523,13 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 	int old_freq;
 	int ramp_dir;
 	int cpu_load;
+	int avg_cpu_load;
+	int max_of_avg_and_cur_load;
+	int ideal_speed;
 	struct smartass_info_s *this_smartass;
 	struct cpufreq_policy *policy;
 	unsigned int relation = round_new_freq_down;
+	
 	for_each_possible_cpu(cpu) {
 		this_smartass = &per_cpu(smartass_info, cpu);
 		if (!work_cpumask_test_and_clear(cpu))
@@ -507,6 +541,9 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 		old_freq = this_smartass->old_freq;
 		policy = this_smartass->cur_policy;
 		cpu_load = this_smartass->cur_cpu_load;
+		avg_cpu_load = this_smartass->avg_cpu_load;
+		max_of_avg_and_cur_load = max(cpu_load, avg_cpu_load);
+		ideal_speed = this_smartass->ideal_speed;
 
 		if (old_freq != policy->cur) {
 			// frequency was changed by someone else?
@@ -516,69 +553,71 @@ static void cpufreq_smartass_freq_change_time_work(struct work_struct *work)
 		}
 		else if (ramp_dir > 0 && nr_running() > 1) {
 			// ramp up logic:
-			unsigned long max_freq;
+			unsigned int max_freq;
 			
-			max_freq = preferred_max_freq ? preferred_max_freq : policy->max;
+			if (preferred_max_freq && old_freq < preferred_max_freq)
+				max_freq = preferred_max_freq;
+			else
+				max_freq = policy->max;
 			
-			if (old_freq < this_smartass->ideal_speed) {
-				new_freq = this_smartass->ideal_speed;
-			} else if (cpu_load > absolute_max_cpu_load) {				
-				if (ramp_up_step) {
-					if ((old_freq + ramp_up_step) < max_freq)
-						new_freq = max_freq;
-					else
-						new_freq = policy->max;
-				} else if (ideal_cpu_load) {
-					if ((old_freq * cpu_load / ideal_cpu_load) < max_freq)
-						new_freq = max_freq;
-					else
-						new_freq = policy->max;
-				} else {
-					new_freq = policy->max;
-				}
+			if (ideal_speed && old_freq == policy->min) {
+				new_freq = ideal_speed;
+			} else if (max_of_avg_and_cur_load == 100) {
+				new_freq = max_freq;
 			} else if (ramp_up_step) {
-				new_freq = old_freq + ramp_up_step;
+				new_freq = min(old_freq + ramp_up_step, max_freq);
 			} else if (ideal_cpu_load) {
-				new_freq = old_freq * cpu_load / ideal_cpu_load;	
+				int temp_load;
+				
+				if (max_of_avg_and_cur_load > absolute_max_cpu_load)
+					temp_load = max_of_avg_and_cur_load;
+				else
+					temp_load = avg_cpu_load;
+				
+				new_freq = min(old_freq * temp_load /
+						ideal_cpu_load, max_freq);	
 			} else {
 				new_freq = max_freq;
 			}
-			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d ramp up: ramp_dir=%d ideal=%d\n cpu_load=%d",
-				old_freq,ramp_dir,this_smartass->ideal_speed, cpu_load);
+			
+			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d ramp up: ramp_dir=%d ideal=%d\n cpu_load=%d avg_cpu_load %d",
+				old_freq,ramp_dir,ideal_speed, cpu_load, avg_cpu_load);
 		}
 		else if (ramp_dir < 0) {
 			// ramp down logic:
-			if (this_smartass->ideal_speed && (old_freq > this_smartass->ideal_speed)) {
-				new_freq = this_smartass->ideal_speed;
-			}
-			else if (ramp_down_step)
+
+			if (ramp_down_step)
 				new_freq = old_freq - ramp_down_step;
 			else if (ideal_cpu_load) {
-				new_freq = old_freq * cpu_load / ideal_cpu_load;
+				new_freq = old_freq * avg_cpu_load / ideal_cpu_load;
 			} else {
 				// Load heuristics: Adjust new_freq such that, assuming a linear
 				// scaling of load vs. frequency, the load in the new frequency
 				// will be max_cpu_load:
-				new_freq = old_freq * cpu_load / max_cpu_load;
+				new_freq = old_freq * avg_cpu_load / max_cpu_load;
 				if (new_freq > old_freq) // min_cpu_load > max_cpu_load ?!
 					new_freq = old_freq -1;
 			}
-			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d ramp down: ramp_dir=%d ideal=%d\n cpu_load=%d",
-				old_freq,ramp_dir,this_smartass->ideal_speed, cpu_load);
+			
+			if (ideal_speed && old_freq > ideal_speed)
+				new_freq = max(ideal_speed, new_freq);
+			
+			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d ramp down: ramp_dir=%d ideal=%d\n cpu_load=%d avg_cpu_load %d",
+				old_freq,ramp_dir,ideal_speed, cpu_load, avg_cpu_load);
 		}
 		else { // ramp_dir==0 ?! Could the timer change its mind about a queued ramp up/down
 		       // before the work task gets to run?
 		       // This may also happen if we refused to ramp up because the nr_running()==1
 			new_freq = old_freq;
-			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d nothing: ramp_dir=%d nr_running=%lu\n cpu_load=%d",
-				old_freq,ramp_dir,nr_running(), cpu_load);
+			dprintk(SMARTASS_DEBUG_ALG,"smartassQ @ %d nothing: ramp_dir=%d nr_running=%lu\n cpu_load=%d avg_cpu_load %d",
+				old_freq,ramp_dir,nr_running(), cpu_load, avg_cpu_load);
 		}
 
 		// do actual ramp up (returns 0, if frequency change failed):
 		new_freq = target_freq(policy,this_smartass,new_freq,old_freq,relation);
 		if (new_freq)
 		{
-			update_freq_change_stats();
+			update_freq_change_stats(this_smartass, cpu);
 		}
 
 		// reset timer:
@@ -766,7 +805,7 @@ static ssize_t store_min_cpu_load(struct kobject *kobj, struct attribute *attr, 
 
 static ssize_t show_preferred_max_freq(struct kobject *kobj, struct attribute *attr, char *buf)
 {
-	return sprintf(buf, "%lu\n", preferred_max_freq);
+	return sprintf(buf, "%u\n", preferred_max_freq);
 }
 
 static ssize_t store_preferred_max_freq(struct kobject *kobj, struct attribute *attr, const char *buf, size_t count)
@@ -928,7 +967,7 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 		if (!this_smartass->freq_table)
 			printk(KERN_WARNING "Smartass: no frequency table for cpu %d?!\n",cpu);
 			
-		update_freq_change_stats();
+		update_freq_change_stats(this_smartass, cpu);
 
 		smp_wmb();
 
@@ -957,14 +996,14 @@ static int cpufreq_governor_smartass(struct cpufreq_policy *new_policy,
 			__cpufreq_driver_target(this_smartass->cur_policy,
 						new_policy->max, CPUFREQ_RELATION_H);
 						
-			update_freq_change_stats();
+			update_freq_change_stats(this_smartass, cpu);
 		}
 		else if (this_smartass->cur_policy->cur < new_policy->min) {
 			dprintk(SMARTASS_DEBUG_JUMPS,"SmartassI: jumping to new min freq: %d\n",new_policy->min);
 			__cpufreq_driver_target(this_smartass->cur_policy,
 						new_policy->min, CPUFREQ_RELATION_L);
 						
-			update_freq_change_stats();
+			update_freq_change_stats(this_smartass, cpu);
 		}
 
 		if (this_smartass->cur_policy->cur < new_policy->max && !timer_pending(&this_smartass->timer))
@@ -1016,7 +1055,7 @@ static void smartass_suspend(int cpu, int suspend)
 		dprintk(SMARTASS_DEBUG_JUMPS,"SmartassS: suspending at %d\n",policy->cur);
 	}
 	
-	update_freq_change_stats();
+	update_freq_change_stats(this_smartass, cpu);
 
 	reset_timer(smp_processor_id(),this_smartass);
 }
@@ -1085,6 +1124,8 @@ static int __init cpufreq_smartass_init(void)
 		this_smartass->freq_change_time_in_idle = 0;
 		this_smartass->cur_cpu_load = 0;
 		this_smartass->avg_cpu_load = -1;
+		this_smartass->num_samples_since_freq_change = 0;
+		//this_smartass->time_since_freq_change_to_last_timer = 0;
 		// intialize timer:
 		init_timer_deferrable(&this_smartass->timer);
 		this_smartass->timer.function = cpufreq_smartass_timer;
